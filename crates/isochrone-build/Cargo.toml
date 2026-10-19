@@ -1,0 +1,21 @@
+[package]
+name = "isochrone-build"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "isochrone-build"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+geo.workspace = true
+isochrone-core = { version = "0.1.0", path = "../isochrone-core" }
+osmpbf.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

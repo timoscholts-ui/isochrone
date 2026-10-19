@@ -7,3 +7,8 @@ isochrone_viewer/
 *.geojson
 *.csv
 *.xlsx
+
+# Rust build artifacts + generated graph data
+target/
+data/
+python/parity_*.json
