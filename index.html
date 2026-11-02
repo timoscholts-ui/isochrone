@@ -678,9 +678,8 @@ const IsochroneView = (() => {
     rebuildSavedLayer();
 
     try {
-      defaultBounds = L.geoJSON(combinedBuurten).getBounds();
-      const c = defaultBounds.getCenter();
-      state.focus = { lat: c.lat, lng: c.lng };
+      const b = L.geoJSON(combinedBuurten).getBounds();
+      if (b.isValid()) defaultBounds = b;
     } catch (e) { /* ignore */ }
 
     updateParkedDot();
@@ -719,7 +718,7 @@ const IsochroneView = (() => {
     mapEl.addEventListener('dragover', e => e.preventDefault());
     mapEl.addEventListener('drop', e => {
       e.preventDefault();
-      const pt = map.mouseEventToContainerPoint(e.originalEvent);
+      const pt = map.mouseEventToContainerPoint(e);
       const ll = map.containerPointToLatLng(pt);
       setFocus(ll);
     });
@@ -852,7 +851,14 @@ const HeatmapView = (() => {
 
   async function init(m) {
     map = m;
-    manifest = await loadJSON('isochrone_viewer/heatmap_manifest.json');
+    try {
+      manifest = await loadJSON('isochrone_viewer/heatmap_manifest.json');
+    } catch (e) {
+      console.warn('heatmap manifest niet beschikbaar:', e.message);
+      // Hide heatmap tab gracefully when manifest is missing
+      document.querySelector('[data-view="heatmap"]').style.display = 'none';
+      return;
+    }
     // Prefix relative asset paths (manifest is served from isochrone_viewer/).
     manifest.heatmaps.forEach(h => { h.url = 'isochrone_viewer/' + h.url; });
     manifest.metrics.bag.legend = 'isochrone_viewer/' + manifest.metrics.bag.legend;
