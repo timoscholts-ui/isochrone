@@ -705,7 +705,7 @@ const IsochroneView = (() => {
     const s2 = savedList.find(x => x.id === ids[1]);
     if (!s1 || !s2 || !s1.geometry || !s2.geometry) return;
 
-    const overlapFeature = turf.intersect(turf.feature(s1.geometry), turf.feature(s2.geometry));
+    const overlapFeature = turf.intersect(turf.featureCollection([turf.feature(s1.geometry), turf.feature(s2.geometry)]));
     if (!overlapFeature) {
       alert('Geen overlap gevonden tussen de twee isochronen.');
       return;
