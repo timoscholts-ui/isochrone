@@ -72,11 +72,15 @@ def _load_supermarkten():
 
 
 def _load_bag():
-    """BAG-adrespunten (RD), gedupliceerd op (x,y). Return (pops, STRtree)."""
+    """BAG-adrespunten (RD), gedupliceerd op (x,y). Return (pops, STRtree).
+    Returns empty data (pop_bag=0) gracefully if pre-computed files are absent."""
     seen = set()
     xs, ys, pops = [], [], []
     for a in areas.AREAS:
         p = os.path.join(VIEWER_DIR, f"{a['slug']}_bag_adressen.json")
+        if not os.path.exists(p):
+            print(f"[startup] BAG-bestand ontbreekt, overgeslagen: {p}", flush=True)
+            continue
         with open(p, encoding="utf-8") as f:
             lst = json.load(f)
         for b in lst:
