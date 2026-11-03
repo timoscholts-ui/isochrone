@@ -8,9 +8,8 @@ isochrone_viewer/
 *.csv
 *.xlsx
 
-# Rust build artifacts + generated graph data
+# Rust build artifacts
 target/
-data/
 python/parity_*.json
 
 # Local Netlify folder

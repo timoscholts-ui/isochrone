@@ -1,8 +1,25 @@
-# Exclude Rust workspace from Docker build
-Cargo.toml
-Cargo.lock
-crates/
+# Exclude build artifacts and large data files from Docker context
 target/
-Dockerfile.rust
+python/
+*.pbf
+*.gpkg
+*.gml
+*.geojson
+*.csv
+*.xlsx
+isochrone_viewer/
+__pycache__/
+*.pyc
+.netlify
+cache/
+
+# Python-specific files (not needed by Rust server)
+requirements.txt
+Procfile
+server.py
+build_*.py
+isochrone_areas.py
 railpack.json
 nixpacks.toml
+Dockerfile.rust
+Dockerfile.python

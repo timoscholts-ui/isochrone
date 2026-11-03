@@ -4,7 +4,7 @@
 use std::cmp::Ordering;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use crate::graph::Graph;
 
@@ -54,8 +54,11 @@ pub fn dijkstra(graph: &Graph, src: u32) -> Vec<f64> {
 
 /// Thread-safe LRU-ish cache of Dijkstra results, keyed by `(name, node)`.
 /// Mirrors Python's clear-on-full semantics.
+///
+/// Uses `RwLock` so concurrent cache *hits* (reads) do not block each other —
+/// only a cache miss needs an exclusive write lock.
 pub struct DijkstraCache {
-    inner: Mutex<HashMap<(String, u32), Arc<Vec<f64>>>>,
+    inner: RwLock<HashMap<(String, u32), Arc<Vec<f64>>>>,
     max: usize,
 }
 
@@ -63,7 +66,7 @@ impl DijkstraCache {
     #[must_use]
     pub fn new(max: usize) -> Self {
         Self {
-            inner: Mutex::new(HashMap::new()),
+            inner: RwLock::new(HashMap::new()),
             max,
         }
     }
@@ -71,11 +74,22 @@ impl DijkstraCache {
     /// Returns the cached distances for `(name, src)`, computing them on miss.
     pub fn get_or_compute(&self, graph: &Graph, name: &str, src: u32) -> Arc<Vec<f64>> {
         let key = (name.to_string(), src);
-        if let Some(v) = self.inner.lock().unwrap().get(&key) {
+
+        // Fast path: shared read lock — many threads can hit this concurrently.
+        {
+            let g = self.inner.read().unwrap();
+            if let Some(v) = g.get(&key) {
+                return Arc::clone(v);
+            }
+        }
+
+        // Slow path: compute Dijkstra outside any lock, then write.
+        let d = Arc::new(dijkstra(graph, src));
+        let mut g = self.inner.write().unwrap();
+        // Double-check: another thread may have inserted this key while we computed.
+        if let Some(v) = g.get(&key) {
             return Arc::clone(v);
         }
-        let d = Arc::new(dijkstra(graph, src));
-        let mut g = self.inner.lock().unwrap();
         if g.len() >= self.max {
             g.clear();
         }

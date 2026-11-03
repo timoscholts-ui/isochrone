@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use serde::Deserialize;
@@ -21,6 +21,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use isochrone_core::dijkstra::DijkstraCache;
+use isochrone_core::geo::{Coord, LineString, MultiPolygon, Polygon};
 use isochrone_core::geojson::{geom_to_geojson, multipolygon_rd_to_wgs84};
 use isochrone_core::geometry::poly_for_threshold;
 use isochrone_core::graph::Graph;
@@ -287,6 +288,58 @@ fn compute_isochrone(
     })
 }
 
+// ---------------------------------------------------------------------------
+// POST /kpi_polygon
+// ---------------------------------------------------------------------------
+#[derive(serde::Deserialize)]
+struct PolygonRequest {
+    geometry: Value,
+}
+
+async fn kpi_polygon(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<PolygonRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    // Parse WGS84 GeoJSON geometry, transform to RD, compute KPI.
+    let poly_wgs84 = geojson_value_to_multipolygon(&req.geometry);
+    if poly_wgs84.0.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Empty or unsupported geometry".to_string()));
+    }
+    let poly_rd = multipolygon_wgs84_to_rd(&poly_wgs84);
+    let state = Arc::clone(&state);
+    let result = tokio::task::spawn_blocking(move || state.kpi.compute(&poly_rd))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({ "kpi": result })))
+}
+
+/// Transform a (WGS84 lon/lat) MultiPolygon to RD New (EPSG:28992).
+fn multipolygon_wgs84_to_rd(poly: &MultiPolygon<f64>) -> MultiPolygon<f64> {
+    MultiPolygon::new(
+        poly.0
+            .iter()
+            .map(|p| {
+                Polygon::new(
+                    ring_to_rd(p.exterior()),
+                    p.interiors().iter().map(ring_to_rd).collect(),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn ring_to_rd(ring: &LineString<f64>) -> LineString<f64> {
+    LineString::new(
+        ring.0
+            .iter()
+            .map(|c| {
+                let (x, y) = crs::to_rd(c.x, c.y); // c.x = lon, c.y = lat
+                Coord { x, y }
+            })
+            .collect(),
+    )
+}
+
 fn empty_kpi() -> Kpi {
     Kpi {
         wvo: 0.0,
@@ -355,6 +408,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut app = Router::new()
         .route("/isochrone", get(isochrone))
+        .route("/kpi_polygon", post(kpi_polygon))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
