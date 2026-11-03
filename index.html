@@ -685,9 +685,23 @@ const IsochroneView = (() => {
     for (const s of savedList) {
       if (s.type === 'overlap') continue;
       if (!s.geometry) continue;
+      const _modeLabel = { auto: 'Auto', fiets: 'Fiets', lopen: 'Lopen' };
       const lyr = L.geoJSON({ type: 'Feature', properties: {}, geometry: s.geometry }, {
         style: { color: MODE_COLOR[s.mode] || '#2563eb', weight: 2, fillOpacity: 0.08 }
       });
+      if (s.kpi) {
+        lyr.on('click', e => {
+          const k = s.kpi;
+          const ml = _modeLabel[s.mode] || s.mode;
+          const html = '<b>' + ml + ' ' + s.minuten + ' min</b><br>' +
+            'WVO binnen isochroon: ' + fmt(k.wvo) + ' m²<br>' +
+            'Bevolking (BAG-punten): ' + fmt(k.pop_bag) + ' inw<br>' +
+            'Bevolking (area-proportioneel): ' + fmt(k.pop_area) + ' inw<br>' +
+            'WVO / inwoner (BAG): ' + (k.wvo_per_inwoner_bag \!= null ? k.wvo_per_inwoner_bag.toLocaleString('nl-NL', {maximumFractionDigits: 3}) + ' m²/inw' : '—') + '<br>' +
+            'WVO / inwoner (area-prop., MAUP): ' + (k.wvo_per_inwoner_area \!= null ? k.wvo_per_inwoner_area.toLocaleString('nl-NL', {maximumFractionDigits: 3}) + ' m²/inw' : '—');
+          L.popup().setLatLng(e.latlng).setContent(html).openOn(map);
+        });
+      }
       lyr.addTo(savedLayer);
     }
     if (savedVisible && active && !map.hasLayer(savedLayer)) savedLayer.addTo(map);

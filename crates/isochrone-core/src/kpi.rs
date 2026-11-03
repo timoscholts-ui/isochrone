@@ -127,7 +127,7 @@ impl KpiEngine {
 
         let mut dek = BTreeMap::new();
         let mut pop_area = 0.0;
-        for g in self.buurt_tree.locate_in_envelope(aabb) {
+        for g in self.buurt_tree.locate_in_envelope_intersecting(aabb) {
             let b = &self.buurten[g.idx];
             let inter = poly.intersection(&b.geom).unsigned_area();
             if inter > 0.0 {
