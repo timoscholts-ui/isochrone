@@ -136,7 +136,18 @@
   #legend-center-label b { color: var(--text); }
 
   #map { flex: 1; }
+
+  /* overlap comparison */
+  .saved-list li.compare-selected {
+    border-color: #7c3aed; background: #f5f3ff;
+  }
+  #compare-bar { margin-top: 8px; }
+  .compare-btn { background: #7c3aed; }
+  .compare-btn:hover { background: #6d28d9; }
+  #overlap-section { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px; }
+  #overlap-section h3 { color: #7c3aed; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
 </head>
 <body>
 <header id="toolbar">
@@ -191,6 +202,9 @@
       <div class="control">
         <button id="saved-toggle" class="download-btn" style="background:#475569;margin-top:0">Opgeslagen isochronen</button>
         <ul id="saved-list" class="saved-list" style="display:none"></ul>
+        <div id="compare-bar" style="display:none">
+          <button id="compare-btn" class="download-btn compare-btn">Vergelijk 2 isochronen</button>
+        </div>
       </div>
 
       <div class="kpi-grid">
@@ -227,6 +241,18 @@
         methode schaalt buurtinwoners met de dekkingsfractie en lijdt aan het
         <b>modifiable areal unit problem (MAUP)</b> — het verschil tussen beide zie je hierboven.
       </div>
+
+      <div id="overlap-section" style="display:none">
+        <h3>Overlap analyse</h3>
+        <div class="kpi-grid">
+          <div class="card"><div class="k">WVO binnen overlap</div><div class="v" id="ov-wvo">—</div></div>
+          <div class="card"><div class="k">Bevolking (BAG)</div><div class="v" id="ov-pop-bag">—</div></div>
+          <div class="card"><div class="k">Bevolking (area-prop.)</div><div class="v" id="ov-pop-area">—</div></div>
+          <div class="card"><div class="k">WVO / inwoner (BAG)</div><div class="v" id="ov-wvo-bag">—</div></div>
+          <div class="card wide"><div class="k">WVO / inwoner (area-prop., MAUP-gevoelig)</div><div class="v" id="ov-wvo-area">—</div></div>
+        </div>
+        <button id="save-overlap-btn" class="download-btn" style="background:#7c3aed">Sla vergelijking op</button>
+      </div>
     </div>
 
     <!-- ============ Heatmap view panel ============ -->
@@ -253,14 +279,6 @@
         </div>
       </div>
 
-      <div class="control">
-        <label>Metriek</label>
-        <div class="segmented" id="metric-group">
-          <button data-metric="bag" class="active">BAG</button>
-          <button data-metric="area">Area</button>
-        </div>
-      </div>
-
       <div class="legend">
         <h3>Legenda</h3>
         <div id="legend-label">WVO / inwoner (BAG-punten)</div>
@@ -275,10 +293,9 @@
       </div>
 
       <div class="note">
-        <b>BAG</b> telt CBS-buurtinwoners via BAG-woningadressen binnen de isochroon;
-        <b>area</b> schaalt buurtinwoners oppervlakte-proportioneel (MAUP-gevoelig).
-        Bruin = onder de drempel (0,20 m²/inw), teal = erboven. De kleurschaal is per
-        metriek vast over alle 24 combinaties.
+        Bevolking geschat via area-proportionele buurtschaling (MAUP-gevoelig).
+        Bruin = onder de drempel (0,20 m²/inw), teal = erboven. De kleurschaal is
+        vast over alle 12 combinaties (3 modaliteiten × 4 reistijden).
       </div>
     </div>
   </aside>
@@ -375,6 +392,11 @@ const IsochroneView = (() => {
   let savedList = [];
   let savedVisible = false;
   let lastDraw = null;
+
+  let selectedForCompare = new Set();
+  let overlapLayer = null;
+  let compareLayer = null;
+  let lastOverlap = null;
 
   const fmt = n => (n == null ? '—' : Number(n).toLocaleString('nl-NL', {maximumFractionDigits: 1}));
 
@@ -606,20 +628,50 @@ const IsochroneView = (() => {
       return;
     }
     const modeLabel = { auto: 'Auto', fiets: 'Fiets', lopen: 'Lopen' };
+    const ml = s => modeLabel[s.mode] || s.mode;
     savedList.forEach(s => {
       const li = document.createElement('li');
       const d = new Date(s.ts).toLocaleString('nl-NL');
       const info = document.createElement('span');
       info.className = 'saved-info';
-      info.innerHTML = `<b>${esc(modeLabel[s.mode] || s.mode)}</b> ${esc(String(s.minuten))} min — ${esc(d)}`;
+      if (s.type === 'overlap') {
+        const ml1 = modeLabel[s.iso1.mode] || s.iso1.mode;
+        const ml2 = modeLabel[s.iso2.mode] || s.iso2.mode;
+        info.innerHTML = `<b>∩ ${esc(ml1)} ${esc(String(s.iso1.minuten))}min × ${esc(ml2)} ${esc(String(s.iso2.minuten))}min</b> — ${esc(d)}`;
+        li.addEventListener('click', e => {
+          if (e.target.classList.contains('saved-del')) return;
+          restoreOverlapView(s);
+        });
+        li.style.cursor = 'pointer';
+      } else {
+        info.innerHTML = `<b>${esc(ml(s))}</b> ${esc(String(s.minuten))} min — ${esc(d)}`;
+        if (selectedForCompare.has(s.id)) li.classList.add('compare-selected');
+        li.addEventListener('click', e => {
+          if (e.target.classList.contains('saved-del')) return;
+          if (!s.geometry) return;
+          if (selectedForCompare.has(s.id)) {
+            selectedForCompare.delete(s.id);
+            li.classList.remove('compare-selected');
+          } else {
+            if (selectedForCompare.size >= 2) return;
+            selectedForCompare.add(s.id);
+            li.classList.add('compare-selected');
+          }
+          updateCompareBar();
+        });
+        li.style.cursor = 'pointer';
+      }
       const del = document.createElement('button');
       del.className = 'saved-del';
       del.title = 'Verwijderen';
       del.textContent = '✕';
-      del.addEventListener('click', () => {
+      del.addEventListener('click', e => {
+        e.stopPropagation();
+        selectedForCompare.delete(s.id);
         savedList = savedList.filter(x => x.id !== s.id);
         persistSaved();
         rebuildSavedLayer();
+        updateCompareBar();
       });
       li.appendChild(info);
       li.appendChild(del);
@@ -631,6 +683,7 @@ const IsochroneView = (() => {
     if (savedLayer) { map.removeLayer(savedLayer); savedLayer = null; }
     savedLayer = L.layerGroup();
     for (const s of savedList) {
+      if (s.type === 'overlap') continue;
       if (!s.geometry) continue;
       const lyr = L.geoJSON({ type: 'Feature', properties: {}, geometry: s.geometry }, {
         style: { color: MODE_COLOR[s.mode] || '#2563eb', weight: 2, fillOpacity: 0.08 }
@@ -639,6 +692,107 @@ const IsochroneView = (() => {
     }
     if (savedVisible && active && !map.hasLayer(savedLayer)) savedLayer.addTo(map);
     renderSavedList();
+  }
+
+  function updateCompareBar() {
+    document.getElementById('compare-bar').style.display =
+      selectedForCompare.size === 2 ? 'block' : 'none';
+  }
+
+  async function compareSelected() {
+    const ids = [...selectedForCompare];
+    const s1 = savedList.find(x => x.id === ids[0]);
+    const s2 = savedList.find(x => x.id === ids[1]);
+    if (!s1 || !s2 || !s1.geometry || !s2.geometry) return;
+
+    const overlapFeature = turf.intersect(turf.feature(s1.geometry), turf.feature(s2.geometry));
+    if (!overlapFeature) {
+      alert('Geen overlap gevonden tussen de twee isochronen.');
+      return;
+    }
+
+    // Show both source geometries dimmed with dashed border
+    if (compareLayer) { map.removeLayer(compareLayer); compareLayer = null; }
+    compareLayer = L.layerGroup();
+    [s1, s2].forEach(s => {
+      L.geoJSON({ type: 'Feature', properties: {}, geometry: s.geometry }, {
+        style: { color: MODE_COLOR[s.mode] || '#2563eb', weight: 2, dashArray: '6 4', fillOpacity: 0.07 }
+      }).addTo(compareLayer);
+    });
+    if (active) compareLayer.addTo(map);
+
+    // Show intersection polygon
+    if (overlapLayer) { map.removeLayer(overlapLayer); overlapLayer = null; }
+    overlapLayer = L.geoJSON(overlapFeature, {
+      style: { color: '#7c3aed', weight: 2, fillColor: '#7c3aed', fillOpacity: 0.25 }
+    });
+    if (active) overlapLayer.addTo(map);
+
+    // POST to backend for KPIs
+    let kpi;
+    try {
+      const resp = await fetch(`${API_BASE}/kpi_polygon`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ geometry: overlapFeature.geometry }),
+      });
+      if (!resp.ok) throw new Error(`kpi_polygon: ${resp.status}`);
+      const data = await resp.json();
+      kpi = data.kpi;
+    } catch (e) {
+      console.error(e);
+      alert('Fout bij ophalen KPIs voor overlap: ' + e.message);
+      return;
+    }
+
+    displayOverlapKpi(kpi, s1, s2, overlapFeature.geometry);
+  }
+
+  function displayOverlapKpi(kpi, s1, s2, overlapGeo) {
+    document.getElementById('overlap-section').style.display = 'block';
+    document.getElementById('ov-wvo').innerHTML = `${fmt(kpi.wvo)} <small>m²</small>`;
+    document.getElementById('ov-pop-bag').innerHTML = `${fmt(kpi.pop_bag)} <small>inw</small>`;
+    document.getElementById('ov-pop-area').innerHTML = `${fmt(kpi.pop_area)} <small>inw</small>`;
+    document.getElementById('ov-wvo-bag').innerHTML = kpi.wvo_per_inwoner_bag != null
+      ? `${kpi.wvo_per_inwoner_bag.toLocaleString('nl-NL', {maximumFractionDigits: 3})} <small>m²/inw</small>` : '—';
+    document.getElementById('ov-wvo-area').innerHTML = kpi.wvo_per_inwoner_area != null
+      ? `${kpi.wvo_per_inwoner_area.toLocaleString('nl-NL', {maximumFractionDigits: 3})} <small>m²/inw</small>` : '—';
+    lastOverlap = { iso1: s1, iso2: s2, overlapGeometry: overlapGeo, kpi };
+
+    if (overlapLayer) {
+      overlapLayer.on('click', e => {
+        const k = lastOverlap.kpi;
+        const html = `<b>Overlap oppervlak</b><br>
+          WVO: ${fmt(k.wvo)} m²<br>
+          Bevolking (BAG): ${fmt(k.pop_bag)} inw<br>
+          Bevolking (area): ${fmt(k.pop_area)} inw<br>
+          WVO/inw (BAG): ${k.wvo_per_inwoner_bag != null ? k.wvo_per_inwoner_bag.toLocaleString('nl-NL', {maximumFractionDigits: 3}) : '—'} m²<br>
+          WVO/inw (area, MAUP): ${k.wvo_per_inwoner_area != null ? k.wvo_per_inwoner_area.toLocaleString('nl-NL', {maximumFractionDigits: 3}) : '—'} m²`;
+        L.popup().setLatLng(e.latlng).setContent(html).openOn(map);
+      });
+    }
+  }
+
+  function restoreOverlapView(s) {
+    if (compareLayer) { map.removeLayer(compareLayer); compareLayer = null; }
+    compareLayer = L.layerGroup();
+    [s.iso1, s.iso2].forEach(iso => {
+      if (!iso.geometry) return;
+      L.geoJSON({ type: 'Feature', properties: {}, geometry: iso.geometry }, {
+        style: { color: MODE_COLOR[iso.mode] || '#2563eb', weight: 2, dashArray: '6 4', fillOpacity: 0.07 }
+      }).addTo(compareLayer);
+    });
+    if (active) compareLayer.addTo(map);
+
+    if (overlapLayer) { map.removeLayer(overlapLayer); overlapLayer = null; }
+    if (s.overlapGeometry) {
+      overlapLayer = L.geoJSON({ type: 'Feature', properties: {}, geometry: s.overlapGeometry }, {
+        style: { color: '#7c3aed', weight: 2, fillColor: '#7c3aed', fillOpacity: 0.25 }
+      });
+      if (active) overlapLayer.addTo(map);
+    }
+
+    displayOverlapKpi(s.kpi, s.iso1, s.iso2, s.overlapGeometry);
   }
 
   function toggleSaved() {
@@ -707,6 +861,23 @@ const IsochroneView = (() => {
       rebuildSavedLayer();
     });
     document.getElementById('saved-toggle').addEventListener('click', toggleSaved);
+    document.getElementById('compare-btn').addEventListener('click', () => compareSelected());
+    document.getElementById('save-overlap-btn').addEventListener('click', () => {
+      if (!lastOverlap) return;
+      savedList.push({
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        type: 'overlap',
+        ts: Date.now(),
+        iso1: { id: lastOverlap.iso1.id, mode: lastOverlap.iso1.mode, minuten: lastOverlap.iso1.minuten,
+                geometry: lastOverlap.iso1.geometry },
+        iso2: { id: lastOverlap.iso2.id, mode: lastOverlap.iso2.mode, minuten: lastOverlap.iso2.minuten,
+                geometry: lastOverlap.iso2.geometry },
+        overlapGeometry: lastOverlap.overlapGeometry,
+        kpi: lastOverlap.kpi,
+      });
+      persistSaved();
+      rebuildSavedLayer();
+    });
 
     // Sidebar parked dot → drag onto map.
     const parked = document.getElementById('parked-dot');
@@ -750,6 +921,8 @@ const IsochroneView = (() => {
     if (isoLayer) map.removeLayer(isoLayer);
     if (focusMarker) map.removeLayer(focusMarker);
     if (savedLayer) map.removeLayer(savedLayer);
+    if (overlapLayer) map.removeLayer(overlapLayer);
+    if (compareLayer) map.removeLayer(compareLayer);
   }
 
   return { init, activate, deactivate, setFocus };
@@ -766,7 +939,7 @@ const HeatmapView = (() => {
   let active = false;
   let fitted = false;
 
-  const state = { mode: 'auto', minuten: '10', metric: 'bag' };
+  const state = { mode: 'auto', minuten: '10', metric: 'area' };
 
   const fmt = n => Number(n).toLocaleString('nl-NL', { maximumFractionDigits: 3 });
 
@@ -866,7 +1039,6 @@ const HeatmapView = (() => {
 
     bindSegmented('mode-group', b => { state.mode = b.dataset.mode; render(); });
     bindSegmented('minuten-group', b => { state.minuten = b.dataset.minuten; render(); });
-    bindSegmented('metric-group', b => { state.metric = b.dataset.metric; render(); });
 
     try {
       const regionFC = await loadJSON('isochrone_viewer/heatmap_region.geojson');

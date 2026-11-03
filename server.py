@@ -18,9 +18,10 @@ import time
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 import networkx as nx
-from shapely.geometry import Point
+from shapely.geometry import Point, shape as shapely_shape
 from shapely import STRtree, make_valid
 from shapely.ops import unary_union, transform as shapely_transform
 from osmnx.distance import nearest_nodes
@@ -275,6 +276,25 @@ def isochrone(lat: float, lon: float, mode: str = "auto", minuten: int = 10):
         "focus": {"x": round(x, 1), "y": round(y, 1)},
     }
     return result
+
+
+class PolygonRequest(BaseModel):
+    geometry: dict  # GeoJSON geometry (WGS84)
+
+
+@app.post("/kpi_polygon")
+def kpi_polygon(req: PolygonRequest):
+    try:
+        geom_wgs84 = shapely_shape(req.geometry)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid geometry: {e}")
+
+    def _to_rd(x, y, z=None):
+        rx, ry = _TO_RD.transform(x, y)
+        return (rx, ry) if z is None else (rx, ry, z)
+
+    poly_rd = make_valid(shapely_transform(_to_rd, geom_wgs84))
+    return {"kpi": _compute_kpi(poly_rd)}
 
 
 # Serveer de statische viewer (vervangt `python -m http.server`). De API-route
