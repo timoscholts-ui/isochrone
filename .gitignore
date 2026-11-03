@@ -12,3 +12,6 @@ isochrone_viewer/
 target/
 data/
 python/parity_*.json
+
+# Local Netlify folder
+.netlify

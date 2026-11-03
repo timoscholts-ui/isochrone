@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Isochrone viewer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --card: #ffffff;
+    --border: #e2e8f0;
+    --text: #1a202c;
+    --muted: #64748b;
+    --accent: #2563eb;
+    --auto: #dc2626;
+    --fiets: #ea580c;
+    --lopen: #16a34a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--text); background: var(--bg);
+  }
+
+  /* ---- top toolbar ---- */
+  #toolbar {
+    height: 52px; display: flex; align-items: center; gap: 16px;
+    padding: 0 16px; background: var(--card);
+    border-bottom: 1px solid var(--border);
+  }
+  #toolbar .brand { font-weight: 700; font-size: 14px; white-space: nowrap; }
+  #toolbar .view-switch { display: flex; gap: 6px; }
+  #toolbar .view-switch button {
+    padding: 7px 14px; border: 1px solid var(--border); background: var(--bg);
+    border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--text);
+  }
+  #toolbar .view-switch button.active { background: var(--accent); color: #fff; border-color: transparent; }
+
+  /* ---- app / sidebar / panels ---- */
+  #app { display: flex; height: calc(100vh - 52px); }
+  #sidebar {
+    width: 340px; min-width: 340px; overflow-y: auto;
+    padding: 16px; background: var(--bg);
+    border-right: 1px solid var(--border);
+  }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; line-height: 1.5; }
+  .control { margin-bottom: 14px; }
+  .control label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  select {
+    width: 100%; padding: 8px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--card); font-size: 13px; color: var(--text);
+  }
+  .segmented { display: flex; gap: 6px; }
+  .segmented button {
+    flex: 1; padding: 8px 0; border: 1px solid var(--border);
+    background: var(--card); border-radius: 6px; cursor: pointer; font-size: 13px;
+    color: var(--text);
+  }
+  .segmented button.active { color: #fff; border-color: transparent; }
+  .segmented button[data-mode="auto"].active { background: var(--auto); }
+  .segmented button[data-mode="fiets"].active { background: var(--fiets); }
+  .segmented button[data-mode="lopen"].active { background: var(--lopen); }
+  .segmented button[data-metric].active,
+  .segmented button[data-minuten].active { background: var(--accent); }
+  input[type="range"] { width: 100%; }
+  #time-label { font-weight: 600; color: var(--text); }
+  .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  .card .k { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+  .card .v { font-size: 18px; font-weight: 600; }
+  .card .v small { font-size: 11px; font-weight: 400; color: var(--muted); }
+  .card.wide { grid-column: 1 / -1; }
+  h3 { font-size: 12px; margin: 0 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table td { padding: 3px 0; border-bottom: 1px solid var(--border); }
+  table td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+  .note { font-size: 11px; color: var(--muted); margin-top: 14px; line-height: 1.5; }
+  .download-btn {
+    display: block; width: 100%; padding: 10px 0; margin-top: 14px;
+    background: var(--accent); color: #fff; border: none; border-radius: 6px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .download-btn:hover { background: #1d4ed8; }
+
+  /* isochrone: genereer-knop + progress bar */
+  .progress-wrap { margin-top: 10px; }
+  .progress-track { width: 100%; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+  .progress-fill { height: 100%; width: 0%; background: var(--accent); border-radius: 4px; }
+  .progress-label { font-size: 11px; color: var(--muted); margin-top: 4px; text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* isochrone: focus dot (map marker + parked sidebar dot) */
+  .focus-dot {
+    width: 16px; height: 16px; border-radius: 50%;
+    border: 3px solid #fff; box-shadow: 0 0 0 2px #111;
+    cursor: grab;
+  }
+  .focus-dot:active { cursor: grabbing; }
+  #parked-dot {
+    display: inline-block; width: 18px; height: 18px; border-radius: 50%;
+    border: 3px solid #fff; box-shadow: 0 0 0 2px #111; cursor: grab; vertical-align: middle;
+  }
+  #parked-dot:active { cursor: grabbing; }
+  .parked-row { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+
+  /* saved isochrones */
+  .saved-list { list-style: none; margin: 8px 0 0; padding: 0; }
+  .saved-list li {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 6px 8px; background: var(--card); border: 1px solid var(--border);
+    border-radius: 6px; margin-bottom: 6px; font-size: 12px;
+  }
+  .saved-info { flex: 1; }
+  .saved-del { border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; padding: 2px 6px; }
+  .saved-del:hover { color: #dc2626; }
+  .saved-empty { color: var(--muted); font-size: 12px; }
+
+  /* heatmap legend */
+  .legend { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+  .legend h3 { font-size: 12px; margin: 0 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  #legend-label { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+  #legend-bar-wrap { position: relative; }
+  #legend-img { width: 100%; display: block; border-radius: 3px; }
+  #legend-tick { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #1a202c; }
+  #legend-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 5px; font-variant-numeric: tabular-nums; }
+  #legend-center-label { font-size: 11px; color: var(--muted); margin-top: 8px; }
+  #legend-center-label b { color: var(--text); }
+
+  #map { flex: 1; }
+</style>
+</head>
+<body>
+<header id="toolbar">
+  <div class="brand">Kaartviewer — isochrone viewer</div>
+  <div class="view-switch">
+    <button data-view="isochrone" class="active">Isochrone viewer</button>
+    <button data-view="heatmap">Regio-heatmaps</button>
+  </div>
+</header>
+
+<div id="app">
+  <aside id="sidebar">
+    <!-- ============ Isochrone view panel ============ -->
+    <div id="isochrone-panel" class="panel active">
+      <h1 id="isochrone-title">Regio — isochrone viewer <span id="iso-loading" style="display:none;font-size:12px;font-weight:400;color:var(--muted)">berekenen…</span></h1>
+      <div class="sub">Sleep de stip hiernaast naar de kaart om het focuspunt te verplaatsen, of klik op een supermarkt om daar de isochroon te berekenen.</div>
+
+      <div class="control">
+        <label>Focuspunt</label>
+        <div class="parked-row">
+          <span id="parked-dot" draggable="true" title="Sleep mij naar de kaart" style="background:#dc2626"></span>
+          <span>Sleep deze stip naar de kaart</span>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Modaliteit</label>
+        <div class="segmented">
+          <button data-mode="auto" class="active">Auto</button>
+          <button data-mode="fiets">Fiets</button>
+          <button data-mode="lopen">Lopen</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Reistijd: <span id="time-label">10</span> min</label>
+        <input type="range" id="time-slider" min="1" max="20" step="1" value="10">
+      </div>
+
+      <div class="control">
+        <button id="generate-btn" class="download-btn">Genereer isochroon</button>
+        <div id="progress-wrap" class="progress-wrap" style="display:none">
+          <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+          <div class="progress-label" id="progress-label">Berekenen…</div>
+        </div>
+      </div>
+
+      <div class="control">
+        <button id="save-btn" class="download-btn" style="background:#059669;margin-top:0">Sla isochroon op</button>
+      </div>
+
+      <div class="control">
+        <button id="saved-toggle" class="download-btn" style="background:#475569;margin-top:0">Opgeslagen isochronen</button>
+        <ul id="saved-list" class="saved-list" style="display:none"></ul>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="card">
+          <div class="k">WVO binnen isochroon</div>
+          <div class="v" id="kpi-wvo">—</div>
+        </div>
+        <div class="card">
+          <div class="k">Bevolking (BAG-punten)</div>
+          <div class="v" id="kpi-pop-bag">—</div>
+        </div>
+        <div class="card">
+          <div class="k">Bevolking (area-proportioneel)</div>
+          <div class="v" id="kpi-pop-area">—</div>
+        </div>
+        <div class="card">
+          <div class="k">WVO / inwoner (BAG)</div>
+          <div class="v" id="kpi-wvo-bag">—</div>
+        </div>
+        <div class="card wide">
+          <div class="k">WVO / inwoner (area-proportioneel, MAUP-gevoelig)</div>
+          <div class="v" id="kpi-wvo-area">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Buurt-dekking (% oppervlak binnen isochroon)</h3>
+        <table id="buurt-table"></table>
+      </div>
+
+      <div class="note">
+        <b>Bevolking:</b> CBS-buurtinwoners zijn gelijkmatig verdeeld over BAG-woningadressen
+        in die buurt; adrespunten binnen het isochroon worden geteld. De "area-proportionele"
+        methode schaalt buurtinwoners met de dekkingsfractie en lijdt aan het
+        <b>modifiable areal unit problem (MAUP)</b> — het verschil tussen beide zie je hierboven.
+      </div>
+    </div>
+
+    <!-- ============ Heatmap view panel ============ -->
+    <div id="heatmap-panel" class="panel">
+      <h1>Regio-heatmaps</h1>
+      <div class="sub">WVO (supermarktaanbod) per inwoner, als geïnterpoleerd vlak over alle gebieden. Klik op de kaart voor de waarde.</div>
+
+      <div class="control">
+        <label>Modaliteit</label>
+        <div class="segmented" id="mode-group">
+          <button data-mode="auto" class="active">Auto</button>
+          <button data-mode="fiets">Fiets</button>
+          <button data-mode="lopen">Lopen</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Reistijd</label>
+        <div class="segmented" id="minuten-group">
+          <button data-minuten="5">5 min</button>
+          <button data-minuten="10" class="active">10 min</button>
+          <button data-minuten="15">15 min</button>
+          <button data-minuten="20">20 min</button>
+        </div>
+      </div>
+
+      <div class="legend">
+        <h3>Legenda</h3>
+        <div id="legend-label">WVO / inwoner (BAG-punten)</div>
+        <div id="legend-bar-wrap">
+          <img id="legend-img" alt="kleurschaal">
+          <div id="legend-tick"></div>
+        </div>
+        <div id="legend-scale">
+          <span id="legend-min">0</span><span id="legend-max">0</span>
+        </div>
+        <div id="legend-center-label">drempel (neutraal): <b id="legend-center-val">0,20</b> m²/inw</div>
+      </div>
+
+      <div class="note">
+        Bevolking geschat via area-proportionele buurtschaling (MAUP-gevoelig).
+        Bruin = onder de drempel (0,20 m²/inw), teal = erboven. De kleurschaal is
+        vast over alle 12 combinaties (3 modaliteiten × 4 reistijden).
+      </div>
+    </div>
+  </aside>
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+// ============================================================================
+// Shared helpers
+// ============================================================================
+const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+async function loadJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  return r.json();
+}
+
+let _areasPromise = null;
+function getAreas() {
+  if (!_areasPromise) _areasPromise = loadJSON('isochrone_viewer/areas.json');
+  return _areasPromise;
+}
+
+let _supermarktenPromise = null;
+function loadRegioSupermarkten() {
+  if (!_supermarktenPromise) {
+    _supermarktenPromise = (async () => {
+      const areas = await getAreas();
+      const seen = new Set();
+      const out = [];
+      for (const a of areas) {
+        const list = await loadJSON(`isochrone_viewer/${a.slug}_supermarkten.json`);
+        for (const s of list) {
+          const key = `${s.naam}|${s.adres}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(s);
+        }
+      }
+      return out;
+    })();
+  }
+  return _supermarktenPromise;
+}
+
+function showError(err) {
+  document.body.innerHTML = `<div style="padding:20px;font-family:sans-serif">`
+    + `<b>Fout bij laden:</b> ${esc(err.message)}<br><br>`
+    + `Open deze map via een lokale server, bijv.:<br>`
+    + `<code>cd "C:\\Users\\Timo\\Downloads" && python -m http.server 8000</code><br>`
+    + `en ga dan naar <code>http://localhost:8000/index.html</code>.`
+    + `</div>`;
+}
+
+// Basis-URL van de isochrone API. Leeg = same-origin (lokale server.py).
+// Zet dit op de absolute URL van de backend als de frontend op Netlify draait,
+// bijv. 'https://jouw-backend.onrender.com'.
+const API_BASE = 'https://lavish-energy-production-0ccb.up.railway.app';
+
+// ============================================================================
+// Isochrone view module (port of isochrone_viewer.html)
+// ============================================================================
+const IsochroneView = (() => {
+  const MODE_COLOR = { auto: '#dc2626', fiets: '#ea580c', lopen: '#16a34a' };
+
+  let map;
+  let buurtLayer, isoLayer, focusMarker, supermarktLayer, savedLayer;
+  let areas = [];
+  let areaName = {};
+  let combinedBuurten = { type: 'FeatureCollection', features: [] };
+  let supermarkten = [];
+  let defaultBounds = null;
+  let active = false;
+  let fitted = false;
+  let renderToken = 0;
+  let debounceTimer = null;
+  let progressRAF = null;
+  let progressTimeout = null;
+  let progressStart = 0;
+
+  let state = { focus: null, mode: 'auto', minuten: 10 };
+
+  // Rate limit: hooguit één /isochrone-aanroep per 5s (slider-drag, mode-kliks,
+  // supermarkt-kliks en sidebar-drop worden hierdoor uniform afgekapt).
+  const RATE_LIMIT_MS = 5000;
+  let lastGenerate = 0;
+
+  // Saved isochrones (localStorage).
+  const STORAGE_KEY = 'saved_isochrones';
+  const MAX_SAVED = 200;
+  let savedList = [];
+  let savedVisible = false;
+  let lastDraw = null;
+
+  const fmt = n => (n == null ? '—' : Number(n).toLocaleString('nl-NL', {maximumFractionDigits: 1}));
+
+  function setLoading(on) {
+    document.getElementById('iso-loading').style.display = on ? 'inline' : 'none';
+  }
+
+  function buildCombinedLayers() {
+    if (buurtLayer) { map.removeLayer(buurtLayer); buurtLayer = null; }
+    if (supermarktLayer) { map.removeLayer(supermarktLayer); supermarktLayer = null; }
+
+    buurtLayer = L.geoJSON(combinedBuurten, {
+      style: { color: '#94a3b8', weight: 1, fillColor: '#94a3b8', fillOpacity: 0.03 }
+    });
+
+    supermarktLayer = L.layerGroup();
+    for (const s of supermarkten) {
+      const m = L.circleMarker([s.lat, s.lon], {
+        radius: 8, color: '#111', weight: 1.5, fillColor: '#facc15', fillOpacity: 1
+      }).addTo(supermarktLayer).bindPopup(
+        `<b>${esc(s.naam)}</b><br>WVO: ${s.wvo} m²<br>${esc(s.adres)}`
+      );
+      m.on('click', () => setFocus({ lat: s.lat, lng: s.lon }));
+    }
+  }
+
+  // ---- progress bar (frontend-only estimate) ----
+  function setProgress(pct) {
+    document.getElementById('progress-fill').style.width = pct + '%';
+    document.getElementById('progress-label').textContent = Math.round(pct) + '%';
+  }
+  function showProgress() {
+    clearTimeout(progressTimeout);
+    document.getElementById('progress-wrap').style.display = 'block';
+    progressStart = performance.now();
+    cancelAnimationFrame(progressRAF);
+    const step = (now) => {
+      const elapsed = (now - progressStart) / 1000;
+      const pct = 90 * (1 - Math.exp(-elapsed / 2));
+      setProgress(pct);
+      if (pct < 89.5) progressRAF = requestAnimationFrame(step);
+    };
+    progressRAF = requestAnimationFrame(step);
+  }
+  function finishProgress() {
+    cancelAnimationFrame(progressRAF);
+    setProgress(100);
+    clearTimeout(progressTimeout);
+    progressTimeout = setTimeout(() => {
+      document.getElementById('progress-wrap').style.display = 'none';
+      setProgress(0);
+    }, 500);
+  }
+  function hideProgress() {
+    cancelAnimationFrame(progressRAF);
+    clearTimeout(progressTimeout);
+    document.getElementById('progress-wrap').style.display = 'none';
+    setProgress(0);
+  }
+
+  // ---- compute / draw split ----
+  async function compute() {
+    const url = `${API_BASE}/isochrone?lat=${state.focus.lat}&lon=${state.focus.lng}&mode=${state.mode}&minuten=${state.minuten}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`isochrone: ${r.status}`);
+    return r.json();
+  }
+
+  function setFocus(latlng) {
+    state.focus = { lat: latlng.lat, lng: latlng.lng };
+    drawFocusMarker();
+    generate();
+  }
+
+  function generate() {
+    if (!state.focus) return;
+    const now = Date.now();
+    if (now - lastGenerate < RATE_LIMIT_MS) return;
+    lastGenerate = now;
+
+    const myToken = ++renderToken;
+    clearResult();
+    setLoading(true);
+    showProgress();
+    compute()
+      .then(data => {
+        if (myToken !== renderToken) return;
+        drawResult(data);
+        finishProgress();
+        setLoading(false);
+      })
+      .catch(e => {
+        console.error(e);
+        if (myToken === renderToken) hideProgress();
+        setLoading(false);
+      });
+  }
+
+  function drawFocusMarker() {
+    if (!state.focus) return;
+    if (focusMarker) { map.removeLayer(focusMarker); focusMarker = null; }
+    // Non-draggable marker: het focuspunt wordt verplaatst via de sidebar-stip
+    // (drag & drop) of een supermarkt-klik, niet door de marker zelf te slepen.
+    focusMarker = L.marker([state.focus.lat, state.focus.lng], {
+      draggable: false,
+      icon: L.divIcon({
+        className: '',
+        html: `<div class="focus-dot" style="background:${MODE_COLOR[state.mode]}"></div>`,
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+      }),
+    });
+    if (active) focusMarker.addTo(map);
+    updateParkedDot();
+  }
+
+  function updateParkedDot() {
+    const dot = document.getElementById('parked-dot');
+    if (dot) dot.style.background = MODE_COLOR[state.mode];
+  }
+
+  function drawResult(data) {
+    const mode = state.mode;
+    if (isoLayer) { map.removeLayer(isoLayer); isoLayer = null; }
+    if (data && data.geometry) {
+      isoLayer = L.geoJSON({ type: 'Feature', properties: {}, geometry: data.geometry }, {
+        style: { color: MODE_COLOR[mode], weight: 2, fillColor: MODE_COLOR[mode], fillOpacity: 0.16 }
+      });
+      if (active) isoLayer.addTo(map);
+    }
+    drawFocusMarker();
+
+    lastDraw = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      ts: Date.now(),
+      mode: state.mode,
+      minuten: state.minuten,
+      lat: state.focus.lat,
+      lng: state.focus.lng,
+      geometry: (data && data.geometry) ? data.geometry : null,
+      kpi: (data && data.kpi) || null,
+    };
+
+    const v = (data && data.kpi) || {};
+    document.getElementById('kpi-wvo').innerHTML = `${fmt(v.wvo)} <small>m²</small>`;
+    document.getElementById('kpi-pop-bag').innerHTML = `${fmt(v.pop_bag)} <small>inw</small>`;
+    document.getElementById('kpi-pop-area').innerHTML = `${fmt(v.pop_area)} <small>inw</small>`;
+    document.getElementById('kpi-wvo-bag').innerHTML = v.wvo_per_inwoner_bag != null
+      ? `${v.wvo_per_inwoner_bag.toLocaleString('nl-NL', {maximumFractionDigits: 3})} <small>m²/inw</small>` : '—';
+    document.getElementById('kpi-wvo-area').innerHTML = v.wvo_per_inwoner_area != null
+      ? `${v.wvo_per_inwoner_area.toLocaleString('nl-NL', {maximumFractionDigits: 3})} <small>m²/inw</small>` : '—';
+
+    const dek = v.buurt_dekking || {};
+    const tb = document.getElementById('buurt-table');
+    tb.innerHTML = '';
+    let lastArea = null;
+    for (const f of combinedBuurten.features) {
+      const bc = f.properties.buurtcode;
+      const frac = dek[bc] || 0;
+      if (frac <= 0) continue;
+      if (f.properties.area !== lastArea) {
+        lastArea = f.properties.area;
+        const hr = document.createElement('tr');
+        hr.innerHTML = `<td colspan="2" style="font-weight:600;padding-top:8px;color:var(--muted);text-align:left">${esc(areaName[lastArea])}</td>`;
+        tb.appendChild(hr);
+      }
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td><span class="dot" style="background:${MODE_COLOR[mode]}"></span>${esc(f.properties.buurtnaam)}</td>` +
+        `<td>${Math.round(frac * 100)}%</td>`;
+      tb.appendChild(tr);
+    }
+    if (buurtLayer) {
+      buurtLayer.eachLayer(l => {
+        const bc = l.feature.properties.buurtcode;
+        const frac = dek[bc] || 0;
+        l.setStyle({ fillOpacity: 0.05 + frac * 0.5, color: MODE_COLOR[mode], weight: 1 });
+      });
+    }
+  }
+
+  function clearResult() {
+    if (isoLayer) { map.removeLayer(isoLayer); isoLayer = null; }
+    document.getElementById('kpi-wvo').innerHTML = '—';
+    document.getElementById('kpi-pop-bag').innerHTML = '—';
+    document.getElementById('kpi-pop-area').innerHTML = '—';
+    document.getElementById('kpi-wvo-bag').innerHTML = '—';
+    document.getElementById('kpi-wvo-area').innerHTML = '—';
+    document.getElementById('buurt-table').innerHTML = '';
+    if (buurtLayer) {
+      buurtLayer.eachLayer(l => l.setStyle({ fillOpacity: 0.03, color: '#94a3b8', weight: 1 }));
+    }
+  }
+
+  // ---- saved isochrones (localStorage) ----
+  function loadSaved() {
+    try {
+      savedList = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    } catch (e) {
+      savedList = [];
+    }
+    if (!Array.isArray(savedList)) savedList = [];
+  }
+
+  function persistSaved() {
+    // Cap + quota-guard: elke vereenvoudigde geometrie is ~10-50 KB; de 5 MB
+    // quota staat ~100+ entries toe. Bij overschrijding oudste entries droppen.
+    while (savedList.length > MAX_SAVED) savedList.shift();
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(savedList));
+    } catch (e) {
+      while (savedList.length && (e.name === 'QuotaExceededError' || e.code === 22)) {
+        savedList.shift();
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(savedList));
+          return;
+        } catch (e2) { e = e2; }
+      }
+    }
+  }
+
+  function renderSavedList() {
+    const ul = document.getElementById('saved-list');
+    ul.innerHTML = '';
+    if (!savedList.length) {
+      const li = document.createElement('li');
+      li.className = 'saved-empty';
+      li.textContent = 'Nog geen opgeslagen isochronen.';
+      ul.appendChild(li);
+      return;
+    }
+    const modeLabel = { auto: 'Auto', fiets: 'Fiets', lopen: 'Lopen' };
+    savedList.forEach(s => {
+      const li = document.createElement('li');
+      const d = new Date(s.ts).toLocaleString('nl-NL');
+      const info = document.createElement('span');
+      info.className = 'saved-info';
+      info.innerHTML = `<b>${esc(modeLabel[s.mode] || s.mode)}</b> ${esc(String(s.minuten))} min — ${esc(d)}`;
+      const del = document.createElement('button');
+      del.className = 'saved-del';
+      del.title = 'Verwijderen';
+      del.textContent = '✕';
+      del.addEventListener('click', () => {
+        savedList = savedList.filter(x => x.id !== s.id);
+        persistSaved();
+        rebuildSavedLayer();
+      });
+      li.appendChild(info);
+      li.appendChild(del);
+      ul.appendChild(li);
+    });
+  }
+
+  function rebuildSavedLayer() {
+    if (savedLayer) { map.removeLayer(savedLayer); savedLayer = null; }
+    savedLayer = L.layerGroup();
+    for (const s of savedList) {
+      if (!s.geometry) continue;
+      const lyr = L.geoJSON({ type: 'Feature', properties: {}, geometry: s.geometry }, {
+        style: { color: MODE_COLOR[s.mode] || '#2563eb', weight: 2, fillOpacity: 0.08 }
+      });
+      lyr.addTo(savedLayer);
+    }
+    if (savedVisible && active && !map.hasLayer(savedLayer)) savedLayer.addTo(map);
+    renderSavedList();
+  }
+
+  function toggleSaved() {
+    savedVisible = !savedVisible;
+    document.getElementById('saved-toggle').classList.toggle('active', savedVisible);
+    document.getElementById('saved-list').style.display = savedVisible ? 'block' : 'none';
+    if (savedVisible) {
+      if (savedLayer && active && !map.hasLayer(savedLayer)) savedLayer.addTo(map);
+    } else {
+      if (savedLayer && map.hasLayer(savedLayer)) map.removeLayer(savedLayer);
+    }
+  }
+
+  function onStateChange() {
+    generate();
+  }
+
+  async function init(m) {
+    map = m;
+    areas = await getAreas();
+    areaName = Object.fromEntries(areas.map(a => [a.slug, a.name]));
+
+    for (const a of areas) {
+      const buurtenFC = await loadJSON(`isochrone_viewer/${a.slug}_buurten_wgs84.geojson`);
+      for (const f of buurtenFC.features) {
+        combinedBuurten.features.push({
+          type: 'Feature',
+          geometry: f.geometry,
+          properties: { ...f.properties, area: a.slug },
+        });
+      }
+    }
+    supermarkten = await loadRegioSupermarkten();
+    buildCombinedLayers();
+
+    loadSaved();
+    rebuildSavedLayer();
+
+    try {
+      const b = L.geoJSON(combinedBuurten).getBounds();
+      if (b.isValid()) defaultBounds = b;
+    } catch (e) { /* ignore */ }
+
+    updateParkedDot();
+
+    document.getElementById('time-slider').addEventListener('input', e => {
+      state.minuten = Number(e.target.value);
+      document.getElementById('time-label').textContent = e.target.value;
+      scheduleRender();
+    });
+    const modeBtns = document.querySelectorAll('#isochrone-panel .segmented button');
+    modeBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        modeBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.mode = btn.dataset.mode;
+        updateParkedDot();
+        onStateChange();
+      });
+    });
+    document.getElementById('generate-btn').addEventListener('click', () => generate());
+    document.getElementById('save-btn').addEventListener('click', () => {
+      if (!lastDraw || !lastDraw.geometry) return;
+      savedList.push({ ...lastDraw });
+      persistSaved();
+      rebuildSavedLayer();
+    });
+    document.getElementById('saved-toggle').addEventListener('click', toggleSaved);
+
+    // Sidebar parked dot → drag onto map.
+    const parked = document.getElementById('parked-dot');
+    parked.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', 'focus');
+      e.dataTransfer.effectAllowed = 'copy';
+    });
+    const mapEl = map.getContainer();
+    mapEl.addEventListener('dragover', e => e.preventDefault());
+    mapEl.addEventListener('drop', e => {
+      e.preventDefault();
+      const pt = map.mouseEventToContainerPoint(e);
+      const ll = map.containerPointToLatLng(pt);
+      setFocus(ll);
+    });
+  }
+
+  function scheduleRender() {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => { debounceTimer = null; onStateChange(); }, 300);
+  }
+
+  function activate() {
+    active = true;
+    if (buurtLayer) buurtLayer.addTo(map);
+    if (supermarktLayer) supermarktLayer.addTo(map);
+    if (savedVisible && savedLayer && !map.hasLayer(savedLayer)) savedLayer.addTo(map);
+    if (!fitted && defaultBounds) {
+      fitted = true;
+      map.fitBounds(defaultBounds.pad(0.15));
+    }
+    drawFocusMarker();
+    generate();
+  }
+
+  function deactivate() {
+    active = false;
+    hideProgress();
+    if (buurtLayer) map.removeLayer(buurtLayer);
+    if (supermarktLayer) map.removeLayer(supermarktLayer);
+    if (isoLayer) map.removeLayer(isoLayer);
+    if (focusMarker) map.removeLayer(focusMarker);
+    if (savedLayer) map.removeLayer(savedLayer);
+  }
+
+  return { init, activate, deactivate, setFocus };
+})();
+
+
+// ============================================================================
+// Heatmap view module (port of heatmap_viewer.html)
+// ============================================================================
+const HeatmapView = (() => {
+  let map;
+  let heatLayer = null, regionLayer = null;
+  let manifest = null;
+  let active = false;
+  let fitted = false;
+
+  const state = { mode: 'auto', minuten: '10', metric: 'area' };
+
+  const fmt = n => Number(n).toLocaleString('nl-NL', { maximumFractionDigits: 3 });
+
+  function findEntry() {
+    return manifest.heatmaps.find(h =>
+      h.mode === state.mode && h.minuten === state.minuten && h.metric === state.metric);
+  }
+
+  function normInverse(t, norm) {
+    if (t <= 0.5) return norm.vmin + (t / 0.5) * (norm.vcenter - norm.vmin);
+    return norm.vcenter + ((t - 0.5) / 0.5) * (norm.vmax - norm.vcenter);
+  }
+
+  function colorToValue(r, g, b, norm) {
+    const cmap = manifest.cmap;
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < cmap.length; i++) {
+      const c = cmap[i];
+      const d = (r - c[0]) ** 2 + (g - c[1]) ** 2 + (b - c[2]) ** 2;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    const t = best / (cmap.length - 1);
+    return normInverse(t, norm);
+  }
+
+  function valueAtLatLng(latlng, entry, norm) {
+    if (!heatLayer || !heatLayer._image) return null;
+    const img = heatLayer._image;
+    if (!img.naturalWidth) return null;
+
+    const [south, west] = entry.bounds[0];
+    const [north, east] = entry.bounds[1];
+    if (latlng.lat < south || latlng.lat > north ||
+        latlng.lng < west || latlng.lng > east) return null;
+
+    const fx = (latlng.lng - west) / (east - west);
+    const fy = (north - latlng.lat) / (north - south);
+    const px = Math.max(0, Math.min(img.naturalWidth - 1, Math.round(fx * (img.naturalWidth - 1))));
+    const py = Math.max(0, Math.min(img.naturalHeight - 1, Math.round(fy * (img.naturalHeight - 1))));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(px, py, 1, 1).data;
+    if (d[3] < 128) return null;
+    return colorToValue(d[0], d[1], d[2], norm);
+  }
+
+  function updateLegend() {
+    const m = manifest.metrics[state.metric];
+    const norm = m.norm;
+    document.getElementById('legend-label').textContent = m.label;
+    document.getElementById('legend-img').src = m.legend;
+    document.getElementById('legend-min').textContent = fmt(norm.vmin);
+    document.getElementById('legend-max').textContent = fmt(norm.vmax);
+    document.getElementById('legend-center-val').textContent = fmt(norm.vcenter);
+    const pct = ((norm.vcenter - norm.vmin) / (norm.vmax - norm.vmin)) * 100;
+    document.getElementById('legend-tick').style.left = pct + '%';
+  }
+
+  function render() {
+    if (!manifest) return;
+    const entry = findEntry();
+    if (!entry) return;
+    if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
+    heatLayer = L.imageOverlay(entry.url, entry.bounds, { opacity: 0.85 });
+    if (active) heatLayer.addTo(map);
+    updateLegend();
+  }
+
+  function bindSegmented(groupId, onClick) {
+    document.querySelectorAll(`#${groupId} button`).forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll(`#${groupId} button`).forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        onClick(btn);
+      });
+    });
+  }
+
+  async function init(m) {
+    map = m;
+    try {
+      manifest = await loadJSON('isochrone_viewer/heatmap_manifest.json');
+    } catch (e) {
+      console.warn('heatmap manifest niet beschikbaar:', e.message);
+      // Hide heatmap tab gracefully when manifest is missing
+      document.querySelector('[data-view="heatmap"]').style.display = 'none';
+      return;
+    }
+    // Prefix relative asset paths (manifest is served from isochrone_viewer/).
+    manifest.heatmaps.forEach(h => { h.url = 'isochrone_viewer/' + h.url; });
+    manifest.metrics.bag.legend = 'isochrone_viewer/' + manifest.metrics.bag.legend;
+    manifest.metrics.area.legend = 'isochrone_viewer/' + manifest.metrics.area.legend;
+
+    bindSegmented('mode-group', b => { state.mode = b.dataset.mode; render(); });
+    bindSegmented('minuten-group', b => { state.minuten = b.dataset.minuten; render(); });
+
+    try {
+      const regionFC = await loadJSON('isochrone_viewer/heatmap_region.geojson');
+      regionLayer = L.geoJSON(regionFC, {
+        style: { color: '#475569', weight: 1.5, fill: false, opacity: 0.7 }
+      });
+    } catch (e) {
+      console.warn('regio-grens niet geladen:', e.message);
+    }
+  }
+
+  function activate() {
+    active = true;
+    if (regionLayer) regionLayer.addTo(map);
+    render();
+    if (!fitted && manifest && manifest.heatmaps.length) {
+      fitted = true;
+      if (regionLayer) map.fitBounds(regionLayer.getBounds().pad(0.1));
+      else map.fitBounds(manifest.heatmaps[0].bounds);
+    }
+  }
+
+  function deactivate() {
+    active = false;
+    if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
+    if (regionLayer) map.removeLayer(regionLayer);
+  }
+
+  function onMapClick(latlng) {
+    if (!manifest) return;
+    const entry = findEntry();
+    const norm = manifest.metrics[state.metric].norm;
+    const val = valueAtLatLng(latlng, entry, norm);
+    let content;
+    if (val == null) content = '<i>geen data</i>';
+    else content = `WVO / inwoner: <b>${fmt(val)}</b> m²`;
+    L.popup().setLatLng(latlng).setContent(content).openOn(map);
+  }
+
+  return { init, activate, deactivate, onMapClick };
+})();
+
+
+// ============================================================================
+// Bootstrap
+// ============================================================================
+(async function bootstrap() {
+  const map = L.map('map');
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '© OpenStreetMap'
+  }).addTo(map);
+
+  let activeView = null;
+
+  function switchView(viewName) {
+    if (viewName === activeView) return;
+    activeView = viewName;
+    document.querySelectorAll('#toolbar .view-switch button').forEach(b =>
+      b.classList.toggle('active', b.dataset.view === viewName));
+    document.getElementById('isochrone-panel').classList.toggle('active', viewName === 'isochrone');
+    document.getElementById('heatmap-panel').classList.toggle('active', viewName === 'heatmap');
+    if (viewName === 'isochrone') {
+      HeatmapView.deactivate();
+      IsochroneView.activate();
+    } else {
+      IsochroneView.deactivate();
+      HeatmapView.activate();
+    }
+  }
+
+  document.querySelectorAll('#toolbar .view-switch button').forEach(btn => {
+    btn.addEventListener('click', () => switchView(btn.dataset.view));
+  });
+
+  map.on('click', e => {
+    if (activeView === 'heatmap') HeatmapView.onMapClick(e.latlng);
+  });
+
+  await IsochroneView.init(map);
+  await HeatmapView.init(map);
+  switchView('isochrone');
+})().catch(err => showError(err));
+</script>
+</body>
+</html>

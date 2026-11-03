@@ -47,7 +47,7 @@ import isochrone_areas as areas
 
 MODES = ["auto", "fiets", "lopen"]
 MINUTEN = ["5", "10", "15", "20"]
-METRICS = {"bag": "wvo_per_inwoner_bag", "area": "wvo_per_inwoner_area"}
+METRICS = {"area": "wvo_per_inwoner_area"}
 GRID_CELL = 250          # meter, rasterresolutie voor de interpolatie
 TARGET_PX = 1400         # langste zijde van het uitvoer-PNG in pixels
 V_CENTER = 0.2           # neutrale (drempel)waarde van de divergerende schaal
@@ -256,12 +256,7 @@ def main():
     manifest = {
         "cmap": cmap_to_rgb(_CMAP),
         "metrics": {
-            "bag": {"label": "WVO / inwoner (BAG-punten)",
-                    "norm": {"vmin": vminmax["bag"][0],
-                             "vcenter": V_CENTER,
-                             "vmax": vminmax["bag"][1]},
-                    "legend": "heatmaps/legend_bag.png"},
-            "area": {"label": "WVO / inwoner (area-proportioneel)",
+            "area": {"label": "WVO / inwoner (area-proportioneel, MAUP-gevoelig)",
                      "norm": {"vmin": vminmax["area"][0],
                               "vcenter": V_CENTER,
                               "vmax": vminmax["area"][1]},
