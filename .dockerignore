@@ -1,6 +1,8 @@
-# Exclude Rust workspace so Railpack detects Python (requirements.txt) instead of Rust
+# Exclude Rust workspace from Docker build
 Cargo.toml
 Cargo.lock
 crates/
 target/
 Dockerfile.rust
+railpack.json
+nixpacks.toml
