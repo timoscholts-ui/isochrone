@@ -1,0 +1,6 @@
+# Exclude Rust workspace so Railpack detects Python (requirements.txt) instead of Rust
+Cargo.toml
+Cargo.lock
+crates/
+target/
+Dockerfile.rust
