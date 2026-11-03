@@ -1,5 +1,5 @@
 # ── Stage 1: compile ────────────────────────────────────────────────────────
-FROM rust:1.81-bookworm AS builder
+FROM rust:1.85-bookworm AS builder
 
 WORKDIR /build
 
